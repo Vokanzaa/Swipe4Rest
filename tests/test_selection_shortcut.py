@@ -1,0 +1,64 @@
+from pathlib import Path
+from types import SimpleNamespace
+from dragshift.trigger import Swipe4RestWatcher
+from dragshift.selection import selected_paths
+
+
+def test_shift_tap_requests_selection_without_drag_or_click(qt_session,monkeypatch):
+    watcher=Swipe4RestWatcher(lambda:False,lambda:False)
+    state=[False,False,False]
+    monkeypatch.setattr(watcher,'_state',lambda:tuple(state))
+    monkeypatch.setattr(watcher,'_other_key_down',lambda:False)
+    events=[]
+    watcher.selection_menu.connect(lambda _:events.append('selection'))
+    state[1]=True
+    watcher._tick()
+    assert not events
+    state[1]=False
+    watcher._tick()
+    assert events==['selection']
+    state[:]=[False,True,False]
+    monkeypatch.setattr(watcher,'_other_key_down',lambda:True)
+    watcher._tick()
+    state[1]=False
+    watcher._tick()
+    assert events==['selection']  # Shift+typing/arrows is never a shortcut.
+    # Holding Shift during a mouse click stays an ordinary OS range selection.
+    state[:]=[False,True,False]
+    watcher._tick()
+    state[0]=True
+    watcher._tick()
+    state[:]=[False,False,False]
+    watcher._tick()
+    assert events==['selection']
+
+
+def test_selection_reader_does_not_fill_gaps_or_select_neighbors(tmp_path):
+    paths=[tmp_path/name for name in ('first.txt','neighbor.txt','last.txt')]
+    for path in paths:
+        path.write_text('test')
+    items=[SimpleNamespace(Path=str(paths[n]),IsFileSystem=True) for n in (0,2)]
+    view=SimpleNamespace(Document=SimpleNamespace(SelectedItems=lambda:items))
+    assert selected_paths(view)==[str(paths[0]),str(paths[2])]
+
+
+def test_inactive_explorer_selection_never_opens_over_another_app(qt_session,monkeypatch):
+    from dragshift import selection
+    shortcut=selection.SelectionShortcut()
+    events=[]
+    shortcut.ready.connect(events.append)
+    monkeypatch.setattr(selection,'foreground_explorer',lambda:0)
+    shortcut.request()
+    assert not shortcut.busy and not events
+    shortcut._done(123,['selected-a.png','selected-b.png'])
+    assert not events
+
+
+def test_empty_active_explorer_selection_does_not_open_tools(qt_session,monkeypatch):
+    from dragshift import selection
+    shortcut=selection.SelectionShortcut()
+    events=[]
+    shortcut.ready.connect(events.append)
+    monkeypatch.setattr(selection,'foreground_explorer',lambda:123)
+    shortcut._done(123,[])
+    assert not events

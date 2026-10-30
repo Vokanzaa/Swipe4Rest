@@ -240,6 +240,8 @@ class Swipe4RestApp(QObject):
             print(f"IPC: {len(files)} file(s) handed over", flush=True)
             if files:
                 self.queue_files(files)
+            elif data.get('practice'):
+                self.show_welcome()
             elif data.get("show"):
                 self.show_ready()
             sock.disconnectFromServer()
@@ -663,7 +665,10 @@ def main(argv: list[str] | None = None) -> int:
         return selftest()
     files = [os.path.abspath(a) for a in argv[1:] if not a.startswith("-") and os.path.exists(a)]
     # already running? hand over and exit (instant: no second UI start-up)
-    if send_to_running({"files": files} if files else {"show": "--quiet" not in argv}):
+    payload={"files":files} if files else {"show":"--quiet" not in argv}
+    if '--practice' in argv:
+        payload['practice']=True
+    if send_to_running(payload):
         return 0
     app = Swipe4RestApp(qapp)
     qapp.file_opened.connect(lambda f: app.queue_files([f]))

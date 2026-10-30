@@ -33,7 +33,7 @@ LEGACY = {
     'image': ('Crop','Resize','Edit','Annotate','Redact','Add BG','Compress','Distort','Interlace','Metadata'),
     'video': ('Trim','Resize','Edit','Compress','Distort','Datamosh','Frame','Audio','Metadata'),
     'audio': ('Trim','Edit','Normalize','Fade','Compress','Reverse','Datamosh','Transition','Metadata'),
-    'pdf': ('Protect','Metadata','Merge'), 'archive': ('Extract archive','Contents'), 'print': ('Interlace',),
+    'pdf': ('Protect','Extract','Metadata','Merge'), 'archive': ('Extract archive','Contents'), 'print': ('Interlace',),
 }
 
 
@@ -91,6 +91,8 @@ class BranchMenu(QWidget):
                 continue
             advanced.append(Entry('editor:'+name,tr(name),terminal='tool',tool_key='tool:'+name,
                                   hint='Отпустите: открыть редактор после цепочки'))
+        advanced.append(Entry('editor:Pack','Архив: настройки',terminal='tool',tool_key='tool:Pack',
+                              hint='Отпустите: имя, формат и параметры архива'))
         if advanced:
             # Nested groups stay readable on narrow screens.
             groups=tuple(Entry('editors:'+str(i),'Ещё редакторы' if i else 'Редакторы',tuple(advanced[i:i+6]))
@@ -119,7 +121,8 @@ class BranchMenu(QWidget):
             self.scale=float(self.preferences.q.value('branch_scale',1.))
             self.dark=self.preferences.q.value('branch_theme','light')=='dark'
             self.recognizer.pause_ms=int(self.preferences.q.value('branch_pause',240))
-        self.scale=max(.8,min(1.3,self.scale))
+        fit=min((self.width()-48)/380,max(250,self.height()-230)/380)
+        self.scale=max(.65,min(1.3,self.scale,fit))
         self.recognizer.minimum=74*self.scale
         self.recognizer.jitter=7*self.scale
         local=pos-geometry.topLeft()
@@ -147,6 +150,7 @@ class BranchMenu(QWidget):
         if self.click_mode:
             self.activateWindow()
             self.setFocus()
+            QTimer.singleShot(0,lambda:self.grabMouse() if self.isVisible() else None)
         self.update()
 
     def close_menu(self):
@@ -158,6 +162,8 @@ class BranchMenu(QWidget):
     def hideEvent(self,event):
         self.frame.stop()
         self.recognizer.reset()
+        if QWidget.mouseGrabber() is self:
+            self.releaseMouse()
         super().hideEvent(event)
 
     def next_ring(self):
@@ -269,7 +275,11 @@ class BranchMenu(QWidget):
         if not self.click_mode or self.practice:
             # Qt may suppress dragMove events while a pointer is stationary.
             local=self.mapFromGlobal(QCursor.pos())
-            self.pointer_move((local.x(),local.y()),now)
+            point=(local.x(),local.y())
+            if point!=self.pointer:
+                self.pointer_move(point,now)
+            elif self._back_since is not None and now-self._back_since>=.38:
+                self.back()
         selected=self.recognizer.poll(now)
         if selected is not None and now>=self._lock_until:
             self.navigate(self.hit(selected),selected)
@@ -372,6 +382,9 @@ class BranchMenu(QWidget):
 
     def _footer(self,key):
         if key=='practice':
+            if self.practice and not self.paths:
+                self.close_menu()
+                return
             self.practice=not self.practice
             self.message='Тренировка: файлы не обрабатываются' if self.practice else ''
             self.update()
@@ -433,7 +446,7 @@ class BranchMenu(QWidget):
         foreground=QColor('#f1f4ef' if self.dark else '#202720')
         muted=QColor('#c0c8bf' if self.dark else '#50594f')
         font=QFont(ui_family())
-        font.setPixelSize(round(13*self.scale))
+        font.setPixelSize(max(11,round(13*self.scale)))
         p.setFont(font)
         # Retain a short visible branch history; the complete back stack is kept.
         visible=self.levels[-5:]
@@ -488,7 +501,8 @@ class BranchMenu(QWidget):
         panel=QPainterPath();panel.addRoundedRect(bottom,14,14)
         self._panel(p,panel,alpha=244)
         p.setPen(muted)
-        help_text=self.message or ('Пауза / поворот — открыть ветвь. Отпустить на «Сохранить результат» — выполнить. Центр — назад. Esc — отмена.')
+        hint=self.level.choices[self.hover].hint if 0<=self.hover<len(self.level.choices) else ''
+        help_text=self.message or hint or ('Пауза / поворот — открыть ветвь. Отпустить на «Сохранить результат» — выполнить. Центр — назад. Esc — отмена.')
         p.drawText(bottom.adjusted(16,7,-16,-34),Qt.AlignLeft|Qt.AlignVCenter|Qt.TextWordWrap,help_text)
         self.footer_hits={}
         x=bottom.left()+12

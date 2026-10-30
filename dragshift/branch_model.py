@@ -80,7 +80,7 @@ def after(context: Context, steps) -> Context:
             raise UserError('Неизвестное действие цепочки.')
         op, value = step.op, step.value
         if op == 'convert':
-            available = FORMATS.get(state.kind, ()) + (('MP4','WEBM') if state.kind=='image' and state.ext=='GIF' else ())
+            available = FORMATS.get(state.kind, ()) + (('MP4','WEBM','MOV','MKV','AVI') if state.kind=='image' and state.ext=='GIF' else ())
             if value not in available:
                 raise UserError(f'Формат {value} недоступен после предыдущего шага.')
             kind = ('audio' if value in AUDIO_FORMATS else 'video' if value in ('MP4','WEBM','MKV','MOV','AVI') else
@@ -194,9 +194,12 @@ def conversion_entries(state):
                   _group('print', 'Печать / без потерь', [_action('convert', v, v) for v in ('TIFF','BMP','HEIC','ICO')]),
                   _action('convert', 'PDF', 'Один PDF из серии')]
         groups.append(_group('gif','Одна GIF из кадров',[_action('animate',v) for v in (10,15,24,30)]) if state.count != 1 else _action('convert','GIF','GIF'))
+        if state.count!=1:
+            groups.append(Entry('gif-order','GIF: порядок кадров / FPS',terminal='tool',tool_key='convert:GIF',
+                                hint='Отпустите: порядок по имени, дате или вручную; частота кадров'))
         if state.ext == 'GIF':
             groups[0] = _group('frames', 'Извлечь все кадры', [_action('convert', v, v) for v in ('PNG','JPG','WEBP','BMP')])
-            groups.append(_group('video', 'Видео из анимации', [_action('convert',v,v) for v in ('MP4','WEBM')]))
+            groups.append(_group('video', 'Видео из анимации', [_action('convert',v,v) for v in ('MP4','WEBM','MOV','MKV','AVI')]))
     elif state.kind == 'video':
         groups = [_group('movie','Видео',[_action('convert',v,v) for v in ('MP4','WEBM','MKV','MOV','AVI')]),
                   _action('convert','GIF','Анимированная GIF'), _action('frame',0.,'PNG: первый кадр')]

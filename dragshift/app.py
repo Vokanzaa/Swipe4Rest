@@ -350,7 +350,8 @@ class Swipe4RestApp(QObject):
             elif finish=='folder' and result.outs:
                 from PySide6.QtGui import QDesktopServices
                 from PySide6.QtCore import QUrl
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(result.outs[0].parent)))
+                destination=result.outs[0] if result.outs[0].is_dir() else result.outs[0].parent
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
         window=VideoProgressWindow('tool:Swipe4Rest',paths,lambda:execute(paths,request.steps),done,
                                    ' → '.join(step_text(s) for s in request.steps))
         self.open_window(window)

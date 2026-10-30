@@ -33,4 +33,4 @@ xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
 echo "→ Opening Swipe4Rest (look for it in the menu bar)"
 open "$DEST"
-echo "✓ Done. Drag any file in Finder and press Shift."
+echo "✓ Done. Drag any file in Finder and press Option."

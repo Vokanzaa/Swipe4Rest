@@ -124,6 +124,19 @@ def test_animation_edits_then_extract_all_frames(tmp_path):
     assert [Image.open(p).convert('RGB').getpixel((10,10)) for p in files]==[(255,0,0),(0,128,0),(0,0,255)]
 
 
+def test_frames_from_multiple_animations_remain_grouped_when_reassembled(tmp_path):
+    paths=[]
+    for name,colors in [('a.gif',('red','green')),('b.gif',('blue','yellow'))]:
+        frames=[Image.new('RGB',(32,32),color) for color in colors]
+        path=tmp_path/name
+        frames[0].save(path,save_all=True,append_images=frames[1:],duration=100,loop=0)
+        paths.append(path)
+    out=execute(paths,[Step('convert','PNG'),Step('animate',10)])[0]
+    with Image.open(out) as result:
+        colors=[frame.convert('RGB').getpixel((10,10)) for frame in ImageSequence.Iterator(result)]
+    assert colors==[(255,0,0),(0,128,0),(0,0,255),(255,255,0)]
+
+
 def test_chosen_quality_affects_final_encode(tmp_path):
     import numpy as np
     src=tmp_path/'texture.png'

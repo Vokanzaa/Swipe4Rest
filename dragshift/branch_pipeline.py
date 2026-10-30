@@ -115,14 +115,14 @@ def _flatten_outputs(outputs):
     return files
 
 
-def _step(paths, state, step, quality=90):
+def _step(paths, state, step, quality=90, preserve_order=False):
     if step.op=='pack':
         from .archives import pack
         return pack(paths,step.value)
     if step.op in ('convert','animate'):
         if step.op=='animate' or state.kind=='image' and step.value=='GIF' and len(paths)>1:
             from .gif_sequence import export, ordered_paths
-            return export(ordered_paths(paths),fps=float(step.value) if step.op=='animate' else 10)
+            return export(paths if preserve_order else ordered_paths(paths),fps=float(step.value) if step.op=='animate' else 10)
         if state.kind=='image' and step.value=='PDF' and len(paths)>1:
             return convert.images_to_single_pdf(paths)
         if state.kind=='image' and step.value in convert.IMAGE_TARGETS:
@@ -186,6 +186,7 @@ def execute(paths, steps):
         state=initial
         index=0
         quality=90
+        preserve_order=False
         while index<len(steps):
             video.check_cancel()
             step=steps[index]
@@ -217,7 +218,15 @@ def execute(paths, steps):
                     stop+=1
                 index=stop
                 continue
-            current=_flatten_outputs(_step(current,state,step,quality))
+            outputs=_step(current,state,step,quality,preserve_order)
+            if any(Path(p).is_dir() for p in outputs):
+                if not preserve_order:
+                    from .gif_sequence import ordered_paths
+                    outputs=ordered_paths(outputs)
+                # Expanded frame groups already carry temporal ordering. Sorting
+                # their identical frame basenames would interleave different GIFs.
+                preserve_order=True
+            current=_flatten_outputs(outputs)
             state=after(state,[step])
             index+=1
         # Restore the requested output container after lossless image/audio edits.

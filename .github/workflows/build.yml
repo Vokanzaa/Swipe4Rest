@@ -1,0 +1,432 @@
+name: Build desktop apps
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      mac_intel_only:
+        description: Check Intel Mac only (reuse other platform results)
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    if: ${{ !inputs.mac_intel_only }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller pytest
+
+      - name: Stage and verify native media engines
+        run: python packaging/media_engines.py --stage
+
+      - name: Test all media engines and editors
+        run: python -m pytest -v -s --maxfail=1
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Build app folder (for the installer)
+        run: pyinstaller Swipe4Rest.spec --noconfirm
+
+      - name: Build portable Swipe4Rest.exe
+        run: pyinstaller Swipe4Rest.spec --noconfirm
+        env:
+          ONEFILE: "1"
+
+      - name: Smoke-test both builds
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          foreach ($exe in @("dist\Swipe4Rest\Swipe4Rest.exe", "dist\Swipe4Rest.exe")) {
+            $env:SWIPE4REST_DATA_DIR = Join-Path $env:RUNNER_TEMP 'swipe4rest-profile'
+            foreach ($language in @('en', 'ru')) {
+              $env:DRAGSHIFT_LANGUAGE = $language
+              foreach ($flag in @('--selftest', '--files-selftest', '--branch-selftest')) {
+                $p = Start-Process -FilePath $exe -ArgumentList $flag -Wait -PassThru
+                if ($p.ExitCode -ne 0) {
+                  Get-Content -LiteralPath "$env:SWIPE4REST_DATA_DIR\log.txt" -Tail 160 -ErrorAction Continue
+                  throw "$language $flag failed for $exe ($($p.ExitCode))"
+                }
+              }
+            }
+            "Self-test passed: $exe"
+          }
+          "{0:N1} MB portable" -f ((Get-Item dist\Swipe4Rest.exe).Length / 1MB)
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress | Out-Null
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          & $iscc installer\Swipe4Rest.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          "{0:N1} MB installer" -f ((Get-Item dist\Swipe4Rest-Setup.exe).Length / 1MB)
+
+      - name: Test the installer (silent install, run, uninstall)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Swipe4Rest-Setup.exe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LANG=ru /TASKS=contextmenu" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Install failed ($($p.ExitCode))" }
+          $app = "$env:LOCALAPPDATA\Programs\Swipe4Rest\Swipe4Rest.exe"
+          if (-not (Test-Path $app)) { throw "App not installed" }
+          if (-not (Test-Path "HKCU:\Software\Classes\*\shell\Swipe4Rest\command")) { throw "Context menu not registered" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Programs\Swipe4Rest\data\settings.ini")) { throw 'Language profile was not installed' }
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $t = Start-Process $app -ArgumentList "--selftest" -Wait -PassThru
+          if ($t.ExitCode -ne 0) { throw "Installed app self-test failed" }
+          $t = Start-Process $app -ArgumentList "--files-selftest" -Wait -PassThru
+          if ($t.ExitCode -ne 0) { throw "Installed media self-test failed" }
+          Remove-Item Env:QT_QPA_PLATFORM
+          $u = Start-Process "$env:LOCALAPPDATA\Programs\Swipe4Rest\unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES" -Wait -PassThru
+          Start-Sleep 3
+          if (Test-Path "HKCU:\Software\Classes\*\shell\Swipe4Rest") { throw "Uninstall left the context menu behind" }
+          "Installer OK"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/Swipe4Rest.exe
+            dist/Swipe4Rest-Setup.exe
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        # The optional isolated retry does not rebuild successful Windows/Linux/ARM packages.
+        # Intel needs the full codec set and an official Intel bottle; plain ffmpeg omits Vorbis.
+        include: ${{ fromJSON(inputs.mac_intel_only && '[{"runner":"macos-15-intel","arch":"intel","ffmpeg_formula":"ffmpeg@7"}]' || '[{"runner":"macos-15","arch":"apple-silicon","ffmpeg_formula":"ffmpeg-full"},{"runner":"macos-15-intel","arch":"intel","ffmpeg_formula":"ffmpeg@7"}]') }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Avoid expensive sdist metadata generation before pip falls back
+          # to the same compatible PyMuPDF wheel used by the native checks.
+          pip install -r requirements.txt pyinstaller pytest --only-binary=pymupdf
+
+      - name: Stage native media engines (including Liquid Rescale)
+        env:
+          FFMPEG_FORMULA: ${{ matrix.ffmpeg_formula }}
+        run: |
+          brew install "$FFMPEG_FORMULA" sevenzip pkgconf liblqr libpng
+          # Both formulae are keg-only; select their binaries without relinking
+          # or accidentally staging a preinstalled, reduced-codec ffmpeg.
+          export PATH="$(brew --prefix "$FFMPEG_FORMULA")/bin:$PATH"
+          export PKG_CONFIG_PATH="$(brew --prefix liblqr)/lib/pkgconfig:$(brew --prefix libpng)/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          python packaging/media_engines.py --stage
+
+      - name: Run tests
+        run: python -m pytest -v -s --maxfail=1
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Build Swipe4Rest.app
+        run: pyinstaller Swipe4Rest.spec --noconfirm
+
+      - name: Check relocated media engines before app startup
+        timeout-minutes: 3
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess, tempfile, time
+          engines = Path('dist/Swipe4Rest.app/Contents/Frameworks/bin').resolve()
+          def check(args):
+              started = time.monotonic()
+              proc = subprocess.Popen([str(arg) for arg in args], stdin=subprocess.DEVNULL,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+              try:
+                  out, err = proc.communicate(timeout=25)
+              except subprocess.TimeoutExpired:
+                  # A sample distinguishes dyld/signature startup delays from
+                  # codec/thread hangs; never turn a hang into a passing check.
+                  try:
+                      sample = subprocess.run(['sample', str(proc.pid), '2', '1'],
+                                              capture_output=True, text=True, timeout=10)
+                      # Keep the call graph, not the huge Binary Images appendix.
+                      print(sample.stdout.split('Binary Images:', 1)[0][:26000]
+                            + sample.stderr[-2000:], flush=True)
+                  finally:
+                      proc.kill()
+                      out, err = proc.communicate()
+                      print(err.decode('utf-8', 'replace')[-4000:], flush=True)
+                  raise
+              print(Path(args[0]).name, args[1:4],
+                    f'{time.monotonic() - started:.3f}s, exit {proc.returncode}', flush=True)
+              print((out + err).decode('utf-8', 'replace')[:1200], flush=True)
+              assert proc.returncode == 0
+          for name in ('ffmpeg', 'ffprobe'):
+              check([engines / name, '-version'])
+          with tempfile.TemporaryDirectory(prefix='dragshift-bundle-check-') as folder:
+              output = Path(folder) / 'check.mp4'
+              check([engines / 'ffmpeg', '-v', 'error', '-nostdin', '-f', 'lavfi', '-i',
+                     'testsrc2=size=160x120:rate=24:duration=2', '-f', 'lavfi', '-i',
+                     'sine=frequency=440:duration=2', '-c:v', 'libx264', '-pix_fmt',
+                     'yuv420p', '-c:a', 'aac', '-y', output])
+              check([engines / 'ffprobe', '-v', 'error', '-show_entries',
+                     'format=duration', '-of', 'default=nw=1', output])
+          PY
+
+      - name: Self-test the app bundle
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          # Windowed bundles write Python diagnostics to the application log.
+          # Preserve that evidence when a frozen-only check fails on a runner.
+          trap 'rc=$?; if [ "$rc" -ne 0 ]; then tail -n 160 "$HOME/Library/Logs/Swipe4Rest/log.txt" || true; fi; exit "$rc"' EXIT
+          dist/Swipe4Rest.app/Contents/MacOS/Swipe4Rest --selftest
+          dist/Swipe4Rest.app/Contents/MacOS/Swipe4Rest --branch-selftest
+          for language in en ru; do
+            DRAGSHIFT_LANGUAGE=$language dist/Swipe4Rest.app/Contents/MacOS/Swipe4Rest --files-selftest
+          done
+          codesign --verify --deep --verbose=2 dist/Swipe4Rest.app || true
+          /usr/libexec/PlistBuddy -c "Print :LSUIElement" dist/Swipe4Rest.app/Contents/Info.plist
+
+      - name: Sign & notarize the app (only when Apple credentials are configured)
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$MACOS_CERT_P12" ]; then
+            echo "No Apple Developer ID configured: shipping ad-hoc signed (users see Gatekeeper's warning)."
+            exit 0
+          fi
+          KC=build.keychain; KCPW=$(uuidgen)
+          echo "$MACOS_CERT_P12" | base64 --decode > cert.p12
+          security create-keychain -p "$KCPW" $KC
+          security set-keychain-settings -lut 21600 $KC
+          security unlock-keychain -p "$KCPW" $KC
+          security import cert.p12 -k $KC -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s $KC $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" $KC
+          # sign every nested binary first, then the bundle (hardened runtime + timestamp)
+          find dist/Swipe4Rest.app/Contents -type f \( -name "*.so" -o -name "*.dylib" -o -perm -111 \) -print0 |
+            xargs -0 -I{} codesign --force --timestamp --options runtime --entitlements installer/entitlements.plist --sign "$MACOS_SIGN_IDENTITY" "{}" || true
+          codesign --force --deep --timestamp --options runtime --entitlements installer/entitlements.plist --sign "$MACOS_SIGN_IDENTITY" dist/Swipe4Rest.app
+          codesign --verify --deep --strict --verbose=2 dist/Swipe4Rest.app
+          ditto -c -k --keepParent dist/Swipe4Rest.app Swipe4Rest.zip
+          xcrun notarytool submit Swipe4Rest.zip --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple dist/Swipe4Rest.app
+          spctl --assess --type execute --verbose dist/Swipe4Rest.app
+          echo "SIGNED=1" >> $GITHUB_ENV
+
+      - name: Make the .dmg (drag Swipe4Rest to Applications)
+        run: |
+          mkdir -p dmg
+          cp -R dist/Swipe4Rest.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Swipe4Rest" -srcfolder dmg -ov -format UDZO "dist/Swipe4Rest-mac-${{ matrix.arch }}.dmg"
+          du -h "dist/Swipe4Rest-mac-${{ matrix.arch }}.dmg"
+          if [ "$SIGNED" = "1" ]; then
+            codesign --force --timestamp --sign "${{ secrets.MACOS_SIGN_IDENTITY }}" "dist/Swipe4Rest-mac-${{ matrix.arch }}.dmg"
+            xcrun notarytool submit "dist/Swipe4Rest-mac-${{ matrix.arch }}.dmg" --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_APP_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --wait
+            xcrun stapler staple "dist/Swipe4Rest-mac-${{ matrix.arch }}.dmg"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-${{ matrix.arch }}
+          path: dist/Swipe4Rest-mac-${{ matrix.arch }}.dmg
+
+  linux:
+    if: ${{ !inputs.mac_intel_only }}
+    # Built on Debian 12 (glibc 2.36): the .deb runs on Debian 12/13, Ubuntu 23.04+, Mint 22, MX 23…
+    runs-on: ubuntu-latest
+    container: debian:12
+    steps:
+      - name: System packages
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            git ca-certificates python3 python3-venv python3-dev binutils dpkg-dev file \
+            libx11-6 libxext6 libxrender1 libxkbcommon0 libxkbcommon-x11-0 libxcb1 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 libfontconfig1 libfreetype6 \
+            libdbus-1-3 libegl1 libgl1 libglib2.0-0 \
+            xvfb xfwm4 thunar xdotool dbus-x11 ffmpeg feh fonts-dejavu-core fonts-noto-core \
+            desktop-file-utils hicolor-icon-theme xdg-utils \
+            build-essential pkg-config libpng-dev liblqr-1-0-dev libglib2.0-dev p7zip-full
+
+      - uses: actions/checkout@v4
+
+      - name: Python environment
+        run: |
+          # Python 3.12 (portable build via uv): Debian 12's 3.11 hits a C-extension refcount bug
+          # on None that is harmless on 3.12+ (None is immortal there)
+          python3 -m venv /opt/uv && /opt/uv/bin/pip install -q uv
+          /opt/uv/bin/uv python install 3.12
+          /opt/uv/bin/uv venv -p 3.12 /opt/venv
+          VIRTUAL_ENV=/opt/venv /opt/uv/bin/uv pip install -q -r requirements.txt pyinstaller pytest
+          /opt/venv/bin/python --version
+
+      - name: Stage native media engines (including Liquid Rescale)
+        run: /opt/venv/bin/python packaging/media_engines.py --stage
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: /opt/venv/bin/python -m pytest -v -s --maxfail=1
+
+      - name: Build the app folder
+        run: /opt/venv/bin/pyinstaller Swipe4Rest.spec --noconfirm
+
+      - name: Build the .deb
+        run: |
+          PATH=/opt/venv/bin:$PATH bash packaging/linux/build-deb.sh 0.1.0
+          dpkg-deb --info dist/Swipe4Rest-linux-amd64.deb
+          desktop-file-validate packaging/linux/swipe4rest.desktop
+
+      - name: Install the .deb and self-test it
+        env:
+          QT_QPA_PLATFORM: offscreen
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+        run: |
+          mkdir -p e2e_linux_out
+          apt-get install -y -q ./dist/Swipe4Rest-linux-amd64.deb 2>&1 | tail -5
+          test -x /usr/bin/swipe4rest
+          set +e
+          swipe4rest --selftest > e2e_linux_out/selftest.txt 2>&1
+          rc=$?
+          set -e
+          echo "exit code $rc" >> e2e_linux_out/selftest.txt
+          cat ~/.local/share/Swipe4Rest/log.txt >> e2e_linux_out/selftest.txt 2>/dev/null || true
+          if [ $rc -ne 0 ]; then
+            /opt/venv/bin/python -X faulthandler -m dragshift --selftest >> e2e_linux_out/selftest.txt 2>&1 || true
+            cat ~/.local/share/Swipe4Rest/log.txt >> e2e_linux_out/selftest.txt 2>/dev/null || true
+          fi
+          cat e2e_linux_out/selftest.txt
+          if [ $rc -ne 0 ]; then
+            tail -25 e2e_linux_out/selftest.txt | sed 's/%/%25/g' | while IFS= read -r l; do echo "::error title=selftest::$l"; done
+            exit $rc
+          fi
+          swipe4rest --branch-selftest
+          for language in en ru; do
+            DRAGSHIFT_LANGUAGE=$language swipe4rest --files-selftest
+          done
+
+      - name: End-to-end on XFCE (Xvfb + xfwm4 with compositor off + Thunar)
+        run: |
+          export DISPLAY=:99 LANG=C.UTF-8 LC_ALL=C.UTF-8
+          Xvfb :99 -screen 0 1280x800x24 >/tmp/xvfb.log 2>&1 &
+          sleep 2
+          eval $(dbus-launch --sh-syntax)
+          /opt/venv/bin/python -c "from dragshift.imaging import gradient; gradient((1280, 800), ['#ffb36b', '#ff5f6d', '#c2508f', '#7b8cff'], 160).save('/tmp/wall.png')"
+          xfwm4 --compositor=off >/tmp/xfwm4.log 2>&1 &
+          sleep 2
+          feh --no-fehbg --bg-fill /tmp/wall.png
+          /opt/venv/bin/python demo/e2e_branch.py || { tail -15 e2e_linux_out/log.txt | sed 's/%/%25/g' | while IFS= read -r l; do echo "::error title=e2e::$l"; done; exit 1; }
+
+      - name: Summary
+        if: always()
+        run: cat e2e_linux_out/results.md >> $GITHUB_STEP_SUMMARY || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-deb
+          path: dist/Swipe4Rest-linux-amd64.deb
+
+  publish:
+    needs: [windows, macos, linux]
+    if: always() && github.event_name == 'push' && needs.windows.result == 'success' && needs.macos.result == 'success' && needs.linux.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Derive release from app version
+        id: release
+        run: |
+          python3 - <<'PY'
+          import ast
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          tree = ast.parse(Path('dragshift/__init__.py').read_text(encoding='utf-8'))
+          values = [node.value for node in tree.body if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == '__version__' for target in node.targets)]
+          if len(values) != 1:
+              raise SystemExit('Expected one literal application version.')
+          version = ast.literal_eval(values[0])
+          if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:\+[A-Za-z0-9][A-Za-z0-9.-]*)?', version):
+              raise SystemExit('Invalid application release version.')
+          tag = 'v' + version.replace('+', '-', 1)
+          commit = os.environ['GITHUB_SHA']
+          existing = subprocess.run(['git', 'rev-parse', '--verify', '--quiet', f'refs/tags/{tag}^{{commit}}'],
+                                    capture_output=True, text=True)
+          if existing.returncode == 0 and existing.stdout.strip() != commit:
+              raise SystemExit(f'{tag} already belongs to another commit. Bump the application version before publishing.')
+          if existing.returncode not in (0, 1):
+              raise SystemExit('Could not verify the existing release tag; publication stopped.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'version={version}\ntag={tag}\nname=Swipe4Rest {version}\n')
+          PY
+
+      - name: Prepare application update notes
+        run: >-
+          python3 packaging/release_notes.py
+          --version '${{ steps.release.outputs.version }}'
+          --tag '${{ steps.release.outputs.tag }}'
+          --commit "$GITHUB_SHA"
+          --repository "$GITHUB_REPOSITORY"
+          --output release-body.md
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Publish complete versioned desktop release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: false
+          make_latest: true
+          fail_on_unmatched_files: true
+          body_path: release-body.md
+          generate_release_notes: true
+          files: |
+            out/Swipe4Rest-Setup.exe
+            out/Swipe4Rest.exe
+            out/Swipe4Rest-mac-apple-silicon.dmg
+            out/Swipe4Rest-mac-intel.dmg
+            out/Swipe4Rest-linux-amd64.deb

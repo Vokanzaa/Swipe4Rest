@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec.bak
+.pytest_cache/
+.pytest_*/
+.venv/
+bin/
+e2e_*_out/
+# Local project knowledge and verification memory
+graphify-out/

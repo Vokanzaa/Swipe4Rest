@@ -112,7 +112,8 @@ class BranchMenu(QWidget):
                             Qt.WindowStaysOnTopHint|Qt.NoDropShadowWindowHint)
         self.setWindowFlag(Qt.WindowDoesNotAcceptFocus,not self.click_mode)
         self.setGeometry(geometry)
-        self.paths=resolve_shortcuts(paths if paths is not None else drag_paths or [])
+        self.raw_paths=list(paths if paths is not None else drag_paths or [])
+        self.paths=resolve_shortcuts(self.raw_paths)
         if not self.paths and not practice:
             return
         self.context=context_for(self.paths) if self.paths else Context('image','JPG',3)
@@ -327,14 +328,17 @@ class BranchMenu(QWidget):
             self.update()
             return True
         paths=list(self.paths)
+        if entry.tool_key=='tool:Rename' and not request.steps:paths=list(self.raw_paths)
         self.hide()
         QTimer.singleShot(0,lambda:self.activated.emit(request,paths))
         return True
 
     def dropEvent(self,event):
         # The final OLE payload is authoritative, including order and count.
-        paths=resolve_shortcuts(self._local_paths(event.mimeData()))
+        raw_paths=self._local_paths(event.mimeData())
+        paths=resolve_shortcuts(raw_paths)
         if self._same_paths(paths,self.paths):
+            self.raw_paths=raw_paths
             for key,rect in self.footer_hits.items():
                 if rect.contains(event.position()):
                     event.setDropAction(Qt.CopyAction)
@@ -348,6 +352,7 @@ class BranchMenu(QWidget):
             return
         event.setDropAction(Qt.CopyAction)
         event.accept()
+        self.raw_paths=raw_paths
         self._dispatch(self.level.choices[index])
 
     def mouseMoveEvent(self,event):

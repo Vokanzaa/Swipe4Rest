@@ -13,8 +13,8 @@ from . import animation, audio, convert, imaging, video
 from .branch_model import Context, Step, after, context_for
 from .util import UserError, unique_path
 
-IMAGE_EDITS = {'resize','crop','rotate','gray','quality','clean'}
-VIDEO_EDITS = IMAGE_EDITS | {'mute','trim'}
+IMAGE_EDITS = {'resize','crop','rotate','gray','invert','quality','clean'}
+VIDEO_EDITS = (IMAGE_EDITS-{'invert'}) | {'mute','trim'}
 
 
 def _edit_image(image, steps):
@@ -34,6 +34,8 @@ def _edit_image(image, steps):
             image=ImageOps.grayscale(image).convert('RGBA' if alpha is not None else 'RGB')
             if alpha is not None:
                 image.putalpha(alpha)
+        elif step.op == 'invert':
+            image=imaging.apply_adjust(image,imaging.Adjust(invert=True))
         elif step.op == 'clean':
             clean=Image.new(image.mode,image.size)
             clean.paste(image)
@@ -134,6 +136,9 @@ def _step(paths, state, step, quality=90, preserve_order=False):
         return video.batch(paths,lambda p:convert.convert(p,state.kind,step.value))
     if step.op=='frame':
         return video.batch(paths,lambda p:video.snapshot(p,float(step.value)))
+    if step.op=='reverse' and state.kind in ('image','video'):
+        from . import media_reverse
+        return video.batch(paths,media_reverse.reverse)
     if state.kind=='audio':
         options={'target':'WAV','label':'Flow'}
         if step.op=='normalize': options['normalize']=True

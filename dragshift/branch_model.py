@@ -60,9 +60,12 @@ def context_for(paths) -> Context:
     ext = {'JPEG': 'JPG', 'TIF': 'TIFF', 'HEIF': 'HEIC', 'AIF': 'AIFF'}.get(ext, ext)
     if all(str(p).endswith('.dshift-print') for p in paths):
         return Context('print', ext, len(paths))
-    # Animated web formats may also contain a single frame. Conservative context
-    # avoids offering an operation that would discard an unknown animation.
-    return Context(kind or 'unknown', ext, len(paths), kind == 'image' and ext in ('GIF', 'WEBP', 'PNG', 'AVIF'))
+    animated=kind=='image' and ext in ('GIF','WEBP','PNG','AVIF')
+    if kind=='image' and Path(paths[0]).is_file():
+        from .animation import is_animated
+        try:animated=is_animated(paths[0])
+        except (OSError,ValueError):pass
+    return Context(kind or 'unknown', ext, len(paths), animated)
 
 
 def _number(value, lo, hi):
@@ -116,6 +119,9 @@ def after(context: Context, steps) -> Context:
                 raise UserError('Поворот: 90, 180 или 270 градусов.')
             elif op == 'gray' and value is not None:
                 raise UserError('У этого действия нет параметра.')
+        elif op == 'invert':
+            if state.kind!='image' or value is not None:
+                raise UserError('Инверсия цветов доступна для изображений и анимаций.')
         elif op in ('mute', 'trim', 'frame'):
             if state.kind != 'video':
                 raise UserError('Действие доступно для видео.')
@@ -133,7 +139,10 @@ def after(context: Context, steps) -> Context:
                 raise UserError('У этого действия нет параметра.')
             if op=='mute':
                 state=replace(state,sound=False)
-        elif op in ('normalize', 'fade', 'volume', 'reverse'):
+        elif op == 'reverse':
+            if state.kind not in ('image','video','audio') or value is not None:
+                raise UserError('Реверс доступен для анимации, видео и звука.')
+        elif op in ('normalize', 'fade', 'volume'):
             if state.kind != 'audio':
                 raise UserError('Действие доступно для аудио.')
             if op == 'fade':
@@ -158,7 +167,7 @@ def after(context: Context, steps) -> Context:
 
 
 def step_text(step):
-    names = {'resize': 'Большая сторона', 'crop': 'Кроп по центру', 'rotate': 'Поворот', 'gray': 'Чёрно-белое',
+    names = {'resize': 'Большая сторона', 'crop': 'Кроп по центру', 'rotate': 'Поворот', 'gray': 'Чёрно-белое', 'invert':'Инверсия цветов',
              'quality': 'Качество', 'mute': 'Без звука', 'trim': 'Участок', 'frame': 'Кадр', 'normalize': 'Нормализация',
              'fade': 'Плавное начало/конец', 'volume': 'Громкость', 'reverse': 'Задом наперёд',
              'clean': 'Убрать метаданные', 'compress_pdf': 'Сжать PDF', 'rotate_pdf': 'Повернуть страницы', 'split_pdf': 'Разделить PDF'}
@@ -217,10 +226,10 @@ def processing_entries(state):
     if state.kind in ('image','video'):
         entries += [_group('size','Размер',[_action('resize',v) for v in (640,1280,1920,2560)]),
                     _group('crop','Обрезать бока',[_action('crop',v,label) for v,label in ((1.,'Квадрат 1:1'),(16/9,'Горизонталь 16:9'),(9/16,'Вертикаль 9:16'),(4/3,'4:3'))]),
-                    _group('look','Вид',[_action('rotate',90),_action('rotate',180),_action('rotate',270),_action('gray')]),
+                    _group('look','Вид',[_action('rotate',90),_action('rotate',180),_action('rotate',270),_action('gray')]+([_action('invert')]+([_action('reverse',label='Реверс кадров')] if state.animated else []) if state.kind=='image' else [])),
                     _group('quality','Качество экспорта',[_action('quality',v) for v in (65,80,90,100)],'Для видео и сжатых JPG / WebP / AVIF')]
         if state.kind == 'video':
-            entries.append(_group('time','Время / звук',[_action('mute'),_action('trim',(0.,3.),'Первые 3 секунды'),_action('frame',0.,'Сохранить кадр')]))
+            entries.append(_group('time','Время / звук',[_action('mute'),_action('trim',(0.,3.),'Первые 3 секунды'),_action('frame',0.,'Сохранить кадр'),_action('reverse',label='Реверс кадров')]))
     elif state.kind == 'audio':
         entries += [_action('normalize'),_group('fade','Плавные края',[_action('fade',v) for v in (.1,.5,1.,2.)]),
                     _group('volume','Громкость',[_action('volume',v) for v in (-12.,-6.,3.,6.)]),_action('reverse')]
@@ -229,7 +238,7 @@ def processing_entries(state):
     if state.kind in ('image','video','audio','pdf'):
         entries.append(_action('clean'))
     # Packing is valid even for mixed types and folders. No files are silently omitted.
-    entries.append(_group('pack','Упаковать',[_action('pack',v,v) for v in ('ZIP','7Z')]))
+    entries.append(_group('pack','Файлы',[Entry('rename','Переименовать',terminal='tool',tool_key='tool:Rename',hint='Правила · предпросмотр имён · отмена'),*[_action('pack',v,v) for v in ('ZIP','7Z')]]))
     return tuple(entries)
 
 

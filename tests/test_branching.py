@@ -190,6 +190,25 @@ def test_real_audio_chain(movie):
     assert out.suffix=='.flac' and abs(info.duration-1)<.12
 
 
+def test_invert_and_reverse_are_real_ordered_animation_steps(tmp_path):
+    source=tmp_path/'animated.gif'
+    Image.new('RGB',(32,24),'red').save(source,save_all=True,
+        append_images=[Image.new('RGB',(32,24),'blue')],duration=[80,170],loop=2)
+    result=execute([source],[Step('invert'),Step('reverse')])[0]
+    with Image.open(result) as image:
+        assert image.n_frames==2 and image.info['duration']==170
+        assert image.convert('RGB').getpixel((10,10))==(255,255,0)
+        image.seek(1);assert image.info['duration']==80
+        assert image.convert('RGB').getpixel((10,10))==(0,255,255)
+
+
+def test_file_branch_retains_rename_for_mixed_and_unknown_files():
+    for context in (Context('mixed','',2),Context('unknown','BIN'),Context('folder','')):
+        process=entries(context)[1].children
+        group=next(entry for entry in process if entry.key=='pack')
+        assert any(entry.tool_key=='tool:Rename' and entry.terminal=='tool' for entry in group.children)
+
+
 def menu(qt_session,tmp_path,monkeypatch):
     from dragshift.branch_menu import BranchMenu
     from dragshift import glass

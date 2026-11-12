@@ -186,7 +186,7 @@ def _check_updates(base):
     from . import i18n,updates,update_install
     from .update_tools import UpdateWindow
     assert updates.network() is not None
-    payload=b'DragShift update control'
+    payload=b'Swipe4Rest update control'
     tag='v9.0.0'
     data={'tag_name':tag,'html_url':updates.REPOSITORY+'/releases/tag/'+tag,'name':'Control release',
           'body':'**Control changes**\n\n- Ordered animation and update checks.','draft':False,'prerelease':False,
@@ -354,11 +354,11 @@ def selftest():
             check_shared(base)
             source = base / "archive.zip"
             with zipfile.ZipFile(source, "w") as z:
-                z.writestr("folder/hello.txt", "DragShift test")
+                z.writestr("folder/hello.txt", "Swipe4Rest test")
             for target in archives.TARGETS:
                 result = archives.convert_archive(source, target)[0]
                 extracted = archives.extract(result)[0]
-                assert (extracted / "folder" / "hello.txt").read_text() == "DragShift test"
+                assert (extracted / "folder" / "hello.txt").read_text() == "Swipe4Rest test"
             selected_folder = base / "selected.v1"
             (selected_folder / "empty").mkdir(parents=True)
             (selected_folder / "hello.txt").write_bytes(b"Pack check")
@@ -368,11 +368,11 @@ def selftest():
                 assert (unpacked / "selected.v1" / "hello.txt").read_bytes() == b"Pack check"
                 assert (unpacked / "selected.v1" / "empty").is_dir()
                 assert (unpacked / sound.name).read_bytes() == sound.read_bytes()
-            from .app import DragShiftApp
+            from .app import Swipe4RestApp
             from .audio_tools import AudioToolWindow
             from .archive_tools import ArchiveContentsWindow, ArchivePackWindow
             from .radial import RadialMenu
-            menu = RadialMenu(lambda paths: DragShiftApp.build_rings(None, paths), lambda paths: "1 audio file")
+            menu = RadialMenu(lambda paths: Swipe4RestApp.build_rings(None, paths), lambda paths: "1 audio file")
             menu._load([str(sound)])
             assert "FLAC" in {item.label for item in menu.items}
             menu.next_ring()
@@ -386,7 +386,7 @@ def selftest():
                 QApplication.processEvents()
                 time.sleep(.01)
             assert menu.ring_idx == before
-            assert not hasattr(DragShiftApp, "open_converter")
+            assert not hasattr(Swipe4RestApp, "open_converter")
             windows = [AudioToolWindow([str(sound)], lambda *_: None),
                        ArchiveContentsWindow(str(source), lambda *_: None),
                        ArchivePackWindow([selected_folder, sound], lambda *_: None),

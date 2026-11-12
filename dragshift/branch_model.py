@@ -216,8 +216,11 @@ def conversion_entries(state):
             groups.insert(1,_group('sound','Извлечь звук',[_action('convert',v,v) for v in ('MP3','WAV')]))
     else:
         groups = [_action('convert',v,v) for v in formats]
-    if state.kind == 'video' or state.kind == 'image' and state.ext == 'GIF':
-        groups.append(Entry('emoji','Telegram эмодзи',terminal='tool',tool_key='tool:Telegram emoji',hint='100 × 100 · VP9 · до 3 с'))
+    from .telegram import emoji_format
+    target = emoji_format(state.kind, state.ext, state.animated)
+    if target:
+        hint = '100 × 100 · WebP · квадратный кроп' if target == 'WEBP' else '100 × 100 · VP9 · до 3 с'
+        groups.append(Entry('emoji', 'Telegram эмодзи', terminal='tool', tool_key='tool:Telegram emoji', hint=hint))
     return tuple(groups)
 
 

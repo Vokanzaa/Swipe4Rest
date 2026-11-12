@@ -8,7 +8,9 @@ Independent experimental application by [Vokanzaa](https://github.com/Vokanzaa),
 
 Get the native package from [Releases](https://github.com/Vokanzaa/Swipe4Rest/releases). Windows: `Swipe4Rest-Setup.exe` (installer) or `Swipe4Rest.exe` (portable). macOS: Apple Silicon / Intel DMG. Linux: Debian/Ubuntu x64 DEB. Packages include local engines. Source ZIP/TAR downloads contain source, not an installed application.
 
-Current version: **0.1.1**, an interface experiment. It does not replace DragShift or install its updates. Releases require successful Windows, both Mac and Linux jobs. macOS is ad-hoc signed unless a Developer ID is configured. Native drag on Linux requires X11; Wayland users can explicitly open files with the app.
+Current version: **0.1.2**, an interface experiment. It does not replace DragShift or install its updates. Releases require successful Windows, both Mac and Linux jobs. macOS is ad-hoc signed unless a Developer ID is configured. Native drag on Linux requires X11; Wayland users can explicitly open files with the app.
+
+New in 0.1.2: square crop and WebP export for still Telegram emoji.
 
 New: bulk filename rules with preview/undo, image inversion, animation/video frame reversal, gentle pitch waves in Distort and actual Melt breakdown/recovery previews. Shared mechanisms also ship in DragShift files.15; each app retains its own interface. See [usage and limits](docs/shared-tools.md).
 

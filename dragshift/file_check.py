@@ -186,7 +186,7 @@ def _check_updates(base):
     from . import i18n,updates,update_install
     from .update_tools import UpdateWindow
     assert updates.network() is not None
-    payload=b'Swipe4Rest update control'
+    payload=b'DragShift update control'
     tag='v9.0.0'
     data={'tag_name':tag,'html_url':updates.REPOSITORY+'/releases/tag/'+tag,'name':'Control release',
           'body':'**Control changes**\n\n- Ordered animation and update checks.','draft':False,'prerelease':False,
@@ -322,6 +322,23 @@ def selftest():
             assert .55<video.probe(animated_video).duration<.65
             emoji=telegram.export_emoji(gif)[0]
             assert telegram.validate_export(emoji).width==100
+            from .telegram_tools import emoji_window
+            still = base / 'emoji.png'
+            picture = Image.new('RGBA', (300, 100), 'red')
+            picture.paste((0, 0, 255, 255), (200, 0, 275, 100))
+            picture.paste((0, 0, 0, 0), (275, 0, 300, 100))
+            picture.save(still)
+            saved = []
+            editor = emoji_window([still], lambda action, sources, outputs, extra: saved.extend(outputs))
+            editor.show()
+            QApplication.processEvents()
+            editor.horizontal.setValue(100)
+            editor.primary_btn.click()
+            assert len(saved) == 1 and saved[0].suffix == '.webp'
+            with Image.open(saved[0]) as emoji:
+                assert emoji.size == (100, 100) and emoji.format == 'WEBP'
+                assert emoji.getpixel((25, 50)) == (0, 0, 255, 255)
+                assert emoji.getpixel((90, 50))[3] == 0
             distorted=distortion.export(gif,strength=60,target='GIF')[0]
             with Image.open(distorted) as image:
                 assert image.n_frames==2 and image.size==(80,60)
@@ -337,11 +354,11 @@ def selftest():
             check_shared(base)
             source = base / "archive.zip"
             with zipfile.ZipFile(source, "w") as z:
-                z.writestr("folder/hello.txt", "Swipe4Rest test")
+                z.writestr("folder/hello.txt", "DragShift test")
             for target in archives.TARGETS:
                 result = archives.convert_archive(source, target)[0]
                 extracted = archives.extract(result)[0]
-                assert (extracted / "folder" / "hello.txt").read_text() == "Swipe4Rest test"
+                assert (extracted / "folder" / "hello.txt").read_text() == "DragShift test"
             selected_folder = base / "selected.v1"
             (selected_folder / "empty").mkdir(parents=True)
             (selected_folder / "hello.txt").write_bytes(b"Pack check")
@@ -351,11 +368,11 @@ def selftest():
                 assert (unpacked / "selected.v1" / "hello.txt").read_bytes() == b"Pack check"
                 assert (unpacked / "selected.v1" / "empty").is_dir()
                 assert (unpacked / sound.name).read_bytes() == sound.read_bytes()
-            from .app import Swipe4RestApp
+            from .app import DragShiftApp
             from .audio_tools import AudioToolWindow
             from .archive_tools import ArchiveContentsWindow, ArchivePackWindow
             from .radial import RadialMenu
-            menu = RadialMenu(lambda paths: Swipe4RestApp.build_rings(None, paths), lambda paths: "1 audio file")
+            menu = RadialMenu(lambda paths: DragShiftApp.build_rings(None, paths), lambda paths: "1 audio file")
             menu._load([str(sound)])
             assert "FLAC" in {item.label for item in menu.items}
             menu.next_ring()
@@ -369,7 +386,7 @@ def selftest():
                 QApplication.processEvents()
                 time.sleep(.01)
             assert menu.ring_idx == before
-            assert not hasattr(Swipe4RestApp, "open_converter")
+            assert not hasattr(DragShiftApp, "open_converter")
             windows = [AudioToolWindow([str(sound)], lambda *_: None),
                        ArchiveContentsWindow(str(source), lambda *_: None),
                        ArchivePackWindow([selected_folder, sound], lambda *_: None),

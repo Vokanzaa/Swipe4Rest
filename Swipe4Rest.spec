@@ -70,8 +70,8 @@ if IS_MAC:
         info_plist={
             "CFBundleName": "Swipe4Rest",
             "CFBundleDisplayName": "Swipe4Rest",
-            "CFBundleShortVersionString": "0.1.0",
-            "CFBundleVersion": "0.1.0",
+            "CFBundleShortVersionString": "0.1.2",
+            "CFBundleVersion": "0.1.2",
             "LSUIElement": True,                 # menu-bar app, no Dock icon
             "LSMinimumSystemVersion": "11.0",
             "NSHighResolutionCapable": True,

@@ -62,6 +62,13 @@ def test_image_series_retains_configurable_gif_order_editor():
     assert any(entry.tool_key=='convert:GIF' and entry.terminal=='tool' for entry in choices)
 
 
+def test_still_image_conversion_branch_offers_telegram_emoji(tmp_path):
+    source = image(tmp_path, 'photo.png', size=(300, 100))
+    choices = entries(context_for([source]))[0].children
+    action = next(entry for entry in choices if entry.key == 'emoji')
+    assert action.tool_key == 'tool:Telegram emoji' and 'WebP' in action.hint
+
+
 def test_advanced_pdf_and_archive_actions_are_retained(qt_session):
     from dragshift.branch_menu import BranchMenu
     instance=BranchMenu(lambda _: {},lambda _:'')
